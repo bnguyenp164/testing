@@ -1,108 +1,66 @@
-import sys
-import datetime
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QTableWidget, QTableWidgetItem
-from PyQt5.QtCore import QTimer
-import pyqtgraph as pg
+import streamlit as st
+import time
+import pandas as pd
+import matplotlib.pyplot as plt
+import random
+import threading
+import GPUtil
 
-# Use pynvml to get GPU temperature
-try:
-    from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetTemperature, NVML_TEMPERATURE_GPU
-    nvmlInit()
-    gpu_handle = nvmlDeviceGetHandleByIndex(0)
-    def get_gpu_temp():
-        return nvmlDeviceGetTemperature(gpu_handle, NVML_TEMPERATURE_GPU)
-except Exception as e:
-    print("Warning: GPU not found or pynvml not available:", e)
-    def get_gpu_temp():
-        return 50  # fallback temp if GPU is not detected
+# Streamlit page configuration
+st.set_page_config(page_title="IoT Dashboard", layout="wide")
+st.title("🌡️ IoT Environment Monitoring Dashboard (Simulated)")
 
-class SensorSimulator(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Sensor Data from GPU Temp")
-        self.resize(900, 700)
+# Initialize session state variables
+if 'recording' not in st.session_state:
+    st.session_state.recording = False
+if 'data' not in st.session_state:
+    st.session_state.data = []
 
-        self.start_time = datetime.datetime.now()
-        self.timestamps = []
-        self.data = []
+# Simulated sensor reading function (uses GPU temp or fallback)
+def read_env_sensor():
+    gpus = GPUtil.getGPUs()
+    temp = gpus[0].temperature if gpus else random.uniform(40, 60)
+    humidity = temp + 20  # Simulate humidity based on temp
+    return temp, humidity
 
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.layout = QVBoxLayout(self.central_widget)
+# Background recording function (runs in a thread)
+def record_data():
+    while st.session_state.recording:
+        temp, humidity = read_env_sensor()
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        st.session_state.data.append({
+            'Timestamp': timestamp,
+            'Temperature (°C)': temp,
+            'Humidity (%)': humidity
+        })
+        time.sleep(10)  # 10-second interval
 
-        # Temperature Plot
-        self.temp_plot = pg.PlotWidget(title="Temperature (°C)")
-        self.temp_plot.setYRange(0, 100)
-        self.temp_plot.showGrid(x=True, y=True)
-        self.temp_plot.setLabel('bottom', 'Time')
-        self.temp_curve = self.temp_plot.plot(pen=pg.mkPen('r', width=2), fillLevel=0, brush=(255, 0, 0, 50))
-        self.layout.addWidget(self.temp_plot)
+# Start / Stop recording controls
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("▶️ Start Recording", use_container_width=True):
+        if not st.session_state.recording:
+            st.session_state.recording = True
+            threading.Thread(target=record_data, daemon=True).start()
 
-        # Humidity Plot
-        self.humid_plot = pg.PlotWidget(title="Humidity (%)")
-        self.humid_plot.setYRange(0, 100)
-        self.humid_plot.showGrid(x=True, y=True)
-        self.humid_plot.setLabel('bottom', 'Time')
-        self.humid_curve = self.humid_plot.plot(pen=pg.mkPen('b', width=2), fillLevel=0, brush=(0, 0, 255, 50))
-        self.layout.addWidget(self.humid_plot)
+with col2:
+    if st.button("⏹️ Stop Recording", use_container_width=True):
+        st.session_state.recording = False
 
-        # Table
-        self.table = QTableWidget()
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(['Timestamp', 'Temperature (°C)', 'Humidity (%)'])
-        self.layout.addWidget(self.table)
+# Display recorded data and plot
+if st.session_state.data:
+    df = pd.DataFrame(st.session_state.data)
 
-        # Stop button
-        self.stop_button = QPushButton("Stop")
-        self.stop_button.clicked.connect(self.stop_reading)
-        self.layout.addWidget(self.stop_button)
+    st.subheader("📋 Last 10 Records")
+    st.dataframe(df.tail(10), use_container_width=True)
 
-        # Timer for updating
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_data)
-        self.timer.start(10000)  # 1 second
-
-    def stop_reading(self):
-        self.timer.stop()
-
-    def update_data(self):
-        now = datetime.datetime.now()
-        elapsed = (now - self.start_time).total_seconds()
-
-        temperature = get_gpu_temp()
-        humidity = temperature + 20
-        timestamp_str = now.strftime("%H:%M:%S")
-
-        self.timestamps.append(now)
-        self.data.append({'timestamp': timestamp_str, 'temperature': temperature, 'humidity': humidity})
-
-        self.table.insertRow(self.table.rowCount())
-        self.table.setItem(self.table.rowCount()-1, 0, QTableWidgetItem(timestamp_str))
-        self.table.setItem(self.table.rowCount()-1, 1, QTableWidgetItem(str(temperature)))
-        self.table.setItem(self.table.rowCount()-1, 2, QTableWidgetItem(str(humidity)))
-
-        self.update_graph()
-
-    def update_graph(self):
-        if not self.timestamps:
-            return
-
-        x_vals = [(ts - self.start_time).total_seconds() for ts in self.timestamps]
-        temps = [d['temperature'] for d in self.data]
-        humids = [d['humidity'] for d in self.data]
-
-        self.temp_curve.setData(x=x_vals, y=temps)
-        self.humid_curve.setData(x=x_vals, y=humids)
-
-        self.temp_plot.setXRange(0, 3600)
-        self.humid_plot.setXRange(0, 3600)
-
-        major_ticks = [(i * 600, (self.start_time + datetime.timedelta(seconds=i * 600)).strftime("%H:%M")) for i in range(7)]
-        self.temp_plot.getAxis('bottom').setTicks([major_ticks])
-        self.humid_plot.getAxis('bottom').setTicks([major_ticks])
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = SensorSimulator()
-    window.show()
-    sys.exit(app.exec_())
+    st.subheader("📈 Real-Time Temperature & Humidity Graph")
+    fig, ax = plt.subplots()
+    ax.plot(df['Timestamp'], df['Temperature (°C)'], label="Temperature (°C)", marker='o')
+    ax.plot(df['Timestamp'], df['Humidity (%)'], label="Humidity (%)", marker='x')
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Values")
+    ax.tick_params(axis='x', labelrotation=45)
+    ax.legend()
+    ax.grid(True)
+    st.pyplot(fig)
