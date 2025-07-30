@@ -60,7 +60,7 @@ class SensorSimulator(QMainWindow):
         # Timer for updating
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_data)
-        self.timer.start(1000)  # 1 second
+        self.timer.start(10000)  # 1 second
 
     def stop_reading(self):
         self.timer.stop()
